@@ -57,6 +57,14 @@ Parameters:
 #------------------------------------------------------------------------------
 Resources:
 #------------------------------------------------------------------------------
+  ValidatorEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      InstanceId: !Ref ValidatorEC2Instance
+      Tags: 
+      - Key: Name
+        Value: !Ref InstanceName
+#------------------------------------------------------------------------------
   ValidatorEC2Instance:
     Type: AWS::EC2::Instance
     Properties:
