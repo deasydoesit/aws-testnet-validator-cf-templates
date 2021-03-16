@@ -1,0 +1,208 @@
+# TESTNET EC2 VALIDATOR 
+
+# Region agnostic template for standing up a testnet Validator
+
+#------------------------------------------------------------------------------
+Parameters:
+#------------------------------------------------------------------------------
+  InstanceName:
+    Description: Validator EC2 instance name
+    Type: String
+#------------------------------------------------------------------------------
+  SecurityGroupIngressCIDR:
+    Description: The IP address range that can be used to communicate to the 
+      EC2 instances over SSH
+    Type: String
+    MinLength: '9'
+    MaxLength: '18'
+    Default: 0.0.0.0/0
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})
+#------------------------------------------------------------------------------
+  InstanceType:
+    Description: Validator EC2 instance type
+    Type: String
+    Default: t2.large
+    AllowedValues:
+      - t2.large
+      - t2.xlarge
+      - t3.large
+      - t3.xlarge
+      - t3a.large
+      - t3a.xlarge
+      - m5.large
+      - m5.xlarge
+    ConstraintDescription: Must be a valid EC2 instance type.
+#------------------------------------------------------------------------------
+  EBSType:
+    Description: Validator EBS type
+    Type: String
+    Default: gp2
+    AllowedValues:
+      - st1
+      - gp2
+      - gp3
+    ConstraintDescription: Must be a valid EBS type.
+#------------------------------------------------------------------------------
+  EBSSize:
+    Description: Size of EBS volume in GiB
+    Type: Number
+    Default: 256
+    MinValue: 100
+    MaxValue: 1000
+#------------------------------------------------------------------------------
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable Ubuntu SSH access
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: Must be the name of an existing EC2 KeyPair.
+#------------------------------------------------------------------------------
+  AMIID:
+    Description: ID of Ubuntu 20.04-amd64 AMI
+    Type: String
+#------------------------------------------------------------------------------
+  AvailabilityZone:
+    Description: Availability zone
+    Type: AWS::EC2::AvailabilityZone::Name
+    ConstraintDescription: Must be the name of an AWS AZ.
+#------------------------------------------------------------------------------
+Resources:
+#------------------------------------------------------------------------------
+  ValidatorSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Suggested Security Group configurations for running 
+        Helium Validator
+      SecurityGroupIngress:
+      - CidrIp: !Ref SecurityGroupIngressCIDR
+        FromPort: 22
+        IpProtocol: tcp
+        ToPort: 22
+        Description: SSH - Home IP
+      - CidrIp: 0.0.0.0/0
+        FromPort: 2154
+        IpProtocol: tcp
+        ToPort: 2154
+        Description: Validator comms
+#------------------------------------------------------------------------------
+  ValidatorEC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref AMIID
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyName
+      AvailabilityZone: !Ref AvailabilityZone
+      BlockDeviceMappings:
+      - Ebs:
+          VolumeType: !Ref EBSType
+          VolumeSize: !Ref EBSSize
+        DeviceName: /dev/sdb
+      SecurityGroupIds: 
+      - !ImportValue ValidatorSecurityGroupId
+      Tags:
+      - Key: Name
+        Value: !Ref InstanceName
+      UserData:
+        Fn::Base64: |
+          Content-Type: multipart/mixed; boundary="//"
+          MIME-Version: 1.0
+
+          --//
+          Content-Type: text/cloud-config; charset="us-ascii"
+          MIME-Version: 1.0
+          Content-Transfer-Encoding: 7bit
+          Content-Disposition: attachment; filename="cloud-config.txt"
+
+          #cloud-config
+          cloud_final_modules:
+          - [scripts-user, always]
+
+          --//
+          Content-Type: text/x-shellscript; charset="us-ascii"
+          MIME-Version: 1.0
+          Content-Transfer-Encoding: 7bit
+          Content-Disposition: attachment; filename="userdata.txt"
+
+          #!/bin/bash
+
+          # Update Ubuntu, install Docker & AWS CLI
+          echo "=======Installing dependencies======="
+          apt-get update -y 
+          apt-get full-upgrade -y 
+          apt-get install wget -y
+          apt-get install docker.io -y 
+
+          # Mount EBS volume if not yet mounted
+          MOUNT=$(file -s /dev/xvdb)
+          if [ "$MOUNT" = "/dev/xvdb: data" ]; then
+              echo "=======Mounting EBS volume======="
+              mkfs -t ext4 /dev/xvdb
+              mkdir /data
+              mount /dev/xvdb /data/
+              mkdir /data/validator_data
+              cp /etc/fstab /etc/fstab.orig
+              # Configure automatic mount after reboot
+              uuid=$(blkid -s UUID -o value /dev/xvdb)
+              echo "UUID=${uuid}       /data   ext4    defaults,nofail        0       2" >> /etc/fstab
+          fi
+
+          # Configure Ubuntu user
+          if [ ! -d /home/ubuntu/docker-configured ]; then
+              # Add Ubuntu to sudo and docker groups
+              echo "=======Setting user permissions and configurations======="
+              usermod -aG docker ubuntu
+              echo "alias vld='docker exec validator miner'" >> /home/ubuntu/.bashrc
+              echo "true" >> /home/ubuntu/docker-configured
+          fi
+
+          # Reboot if required
+          if [ -f /var/run/reboot-required ]; then
+              echo "=======Reboot required, performing reboot======="
+              reboot
+              exit 0
+          fi
+
+          if [ ! -f /etc/cron.d/hourly_validator_check ] && [ ! -f /opt/hourly_validator_update.sh ]; then
+              echo "=======Creating hourly Validator update check cron======="
+              echo "1 * * * * root /bin/sh /opt/hourly_validator_update.sh" >> "/etc/cron.d/hourly_validator_check"
+
+              echo "=======Creating hourly Validator update script======="
+              cat <<-EOT > /opt/hourly_validator_update.sh
+              #!/bin/bash
+              echo \$(date -u) >> /opt/hourly_validator_update.log
+              echo "Checking if Validator requires updating" >> /opt/hourly_validator_update.log
+              out=\$(docker pull quay.io/team-helium/validator:latest-val-amd64)
+              echo "out: \$out" >> /opt/hourly_validator_update.log
+              echo "\$out" | grep "Image is up to date" && pull_status="already_pulled" || pull_status="newly_pulled"
+              echo "\$pull_status" >> /opt/hourly_validator_update.log
+              if [ "\$pull_status" = "newly_pulled" ];
+              then
+                  echo "Validator DOES require updating" >> /opt/hourly_validator_update.log
+                  echo "Performing update" >> /opt/hourly_validator_update.log
+                  echo \$(docker stop validator)  >> /opt/hourly_validator_update.log
+                  echo \$(docker rm validator) >> /opt/hourly_validator_update.log
+                  echo \$(docker run --init -d --restart always --publish 2154:2154/tcp --name validator --mount type=bind,source=/data/validator_data,target=/var/data quay.io/team-helium/validator:latest-val-amd64) >> /opt/hourly_validator_update.log
+                  echo \$(docker image prune -f) >> /opt/hourly_validator_update.log
+                  echo "Successfully updated Validator" >> /opt/hourly_validator_update.log
+                  echo "-----------------------------------" >> /opt/hourly_validator_update.log
+                  exit 0
+              else
+                  echo "Validator DOES NOT require updating" >> /opt/hourly_validator_update.log
+                  echo "-----------------------------------" >> /opt/hourly_validator_update.log
+                  exit 0
+              fi
+          EOT
+          fi
+
+          # Run Validator if not running
+          if [ ! "$(docker ps -q -f name=validator)" ]; then
+              if [ "$(docker ps -aq -f status=exited -f name=validator)" ]; then
+                  # Remove exited Miner instances
+                  echo "=======Removing exited Validator instances======="
+                  docker rm validator
+              fi
+
+              echo "=======Running Validator======="
+              docker run --init -d --restart always --publish 2154:2154/tcp --name validator --mount type=bind,source=/data/validator_data,target=/var/data quay.io/team-helium/validator:latest-val-amd64
+          fi
+
+          exit 0
+          --//
