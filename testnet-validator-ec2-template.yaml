@@ -9,15 +9,6 @@ Parameters:
     Description: Validator EC2 instance name
     Type: String
 #------------------------------------------------------------------------------
-  SecurityGroupIngressCIDR:
-    Description: The IP address range that can be used to communicate to the 
-      EC2 instances over SSH
-    Type: String
-    MinLength: '9'
-    MaxLength: '18'
-    Default: 0.0.0.0/0
-    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})
-#------------------------------------------------------------------------------
   InstanceType:
     Description: Validator EC2 instance type
     Type: String
@@ -65,23 +56,6 @@ Parameters:
     ConstraintDescription: Must be the name of an AWS AZ.
 #------------------------------------------------------------------------------
 Resources:
-#------------------------------------------------------------------------------
-  ValidatorSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: Suggested Security Group configurations for running 
-        Helium Validator
-      SecurityGroupIngress:
-      - CidrIp: !Ref SecurityGroupIngressCIDR
-        FromPort: 22
-        IpProtocol: tcp
-        ToPort: 22
-        Description: SSH - Home IP
-      - CidrIp: 0.0.0.0/0
-        FromPort: 2154
-        IpProtocol: tcp
-        ToPort: 2154
-        Description: Validator comms
 #------------------------------------------------------------------------------
   ValidatorEC2Instance:
     Type: AWS::EC2::Instance
