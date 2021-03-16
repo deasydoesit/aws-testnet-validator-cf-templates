@@ -19,7 +19,14 @@ chmod 400 <your-key-pair.pem>
 7. Next deploy the "testnet-validator-ec2-template.yaml" file to create an EC2 running the Docker validator image. You can repeat step (7) as many times as you'd like to create as many instances as you'd like.
 8. Voila, your validator will be deployed and will check whether updating is needed every hour, and will self-update if so. No checks for whether or not the validator is in CG.
 
-
+I should note that I've set an alias so that you can access your validator as follows:
+```bash
+vld <validator commands>
+```
+e.g.,
+```bash
+vld info height
+```
 ## Contributing
 Pull requests are welcome. For major changes, please open an issue first to discuss what you would like to change.
 
