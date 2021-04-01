@@ -112,7 +112,7 @@ Resources:
           apt-get install wget -y
           apt-get install docker.io -y 
 
-          # Mount EBS volume if not yet mounted
+          # Mount EBS volume on non-Nitro instances if not yet mounted
           MOUNT=$(file -s /dev/xvdb)
           if [ "$MOUNT" = "/dev/xvdb: data" ]; then
               echo "=======Mounting EBS volume======="
@@ -123,6 +123,21 @@ Resources:
               cp /etc/fstab /etc/fstab.orig
               # Configure automatic mount after reboot
               uuid=$(blkid -s UUID -o value /dev/xvdb)
+              echo "UUID=${uuid}       /data   ext4    defaults,nofail        0       2" >> /etc/fstab
+          fi
+
+          # Mount EBS volume on Nitro instances if not yet mounted
+          MOUNT=$(file -s /dev/nvme1n1)
+          if [ "$MOUNT" = "/dev/nvme1n1: data" ]; then
+              echo "=======Mounting EBS volume======="
+              mkfs -t ext4 /dev/nvme1n1
+              mkdir /data
+              mount /dev/nvme1n1 /data/
+              mkdir /data/validator_data
+              mkdir /data/log
+              cp /etc/fstab /etc/fstab.orig
+              # Configure automatic mount after reboot
+              uuid=$(blkid -s UUID -o value /dev/nvme1n1)
               echo "UUID=${uuid}       /data   ext4    defaults,nofail        0       2" >> /etc/fstab
           fi
 
